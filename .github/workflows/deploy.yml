@@ -32,3 +32,7 @@ jobs:
             git fetch --prune origin
             git reset --hard origin/main
             echo "Hello from Workflow !"
+            # No -v: that would delete the volumes, and with them every workflow and credential. .env is gitignored, so the reset above leaves it alone.
+            docker compose down
+            docker compose pull
+            docker compose up -d
