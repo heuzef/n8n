@@ -23,14 +23,26 @@ Deux VM distinctes, toutes deux sous **Ubuntu LTS** :
 
 ```
 .
-├── docker-compose.yml      # n8n + PostgreSQL
-├── .env.sops.yaml          # secrets chiffrés (SOPS)
+├── docker-compose.yml      # n8n + PostgreSQL — toute la config non secrète
 ├── Dockerfile              # image n8n + nœuds communautaires
+├── community-nodes.txt     # nœuds communautaires, un par ligne, versions figées
+├── docker-entrypoint-custom.sh  # copie les nœuds de l'image vers le volume
+├── docker/postgres/        # création du rôle applicatif à l'initialisation
+├── .sops.yaml              # règles de chiffrement (destinataires age)
+├── .env.sops.yaml          # secrets chiffrés (SOPS) — seul env versionné
+├── .env.example            # toutes les clés attendues, documentées, sans valeur
+├── deploy.sh               # déploiement idempotent, aussi le point d'entrée CI
+├── Makefile                # raccourcis vers scripts/
+├── scripts/                # secrets / backup / restore / export / healthcheck
+│   └── systemd/            # timer de sauvegarde système
 ├── workflows/              # JSON alimentés par le source control natif n8n
 ├── templates/              # modèles de workflows réutilisables
-├── scripts/                # backup / restore / export CLI
 └── docs/                   # notes d'exploitation
 ```
+
+Les scripts sont la source de vérité opérationnelle : `make help` les liste tous.
+Détails dans `docs/deployment.md`, `docs/ollama.md`, `docs/backup-restore.md`,
+`docs/troubleshooting.md`.
 
 ## Règles impératives
 
@@ -59,15 +71,23 @@ Environment="OLLAMA_KEEP_ALIVE=-1"
 
 ## Modèle et performances
 
-- Modèle en service : **`qwen2.5:14b`** (Q4_K_M, 14,8 B, ~9 Go, contexte 32 768, capacités `completion` + `tools`).
-- Débit mesuré : **~4,2 tokens/s**, chargement initial ~35 s. C'est la norme attendue pour un 14B quantifié sur 8 cœurs CPU.
+Modèles présents sur la VM (relevé du 2026-09-10, Ollama 0.34.0) :
+
+| Modèle | Paramètres | Quantisation | Contexte | Réflexion |
+|---|---|---|---|---|
+| `qwen3:14b` | 14,8 B | Q4_K_M | 40 960 | oui |
+| `qwen2.5:14b` | 14,8 B | Q4_K_M | 32 768 | **non** |
+| `gemma4:latest` | 8,0 B | Q4_K_M | — | oui |
+
+- Débit mesuré sur `qwen2.5:14b` : **~4,2 tokens/s**, chargement initial ~35 s. C'est la norme attendue pour un 14B quantifié sur 8 cœurs CPU.
+- Un seul modèle reste résident à la fois avec `OLLAMA_KEEP_ALIVE=-1` : alterner `qwen3:14b` et `gemma4` dans le même lot nocturne paie ~35 s de chargement à chaque bascule. Grouper les workflows par modèle.
 - **Le swap est fatal.** Avec une allocation RAM insuffisante, le débit mesuré était de 0,02 tok/s (12 minutes pour répondre « Bonjour »), soit un facteur ~190. Avant tout diagnostic de lenteur : vérifier `free -h` et l'allocation réelle côté hyperviseur, pas seulement la valeur configurée.
 - Ordre de grandeur pour le design des workflows : une réponse de 500 tokens ≈ 2 minutes. Éviter les nœuds qui génèrent de longs textes en série.
 - Exécution en **batch nocturne** : la latence n'est pas un critère, la qualité de sortie prime.
 
 ## Réflexion (thinking)
 
-- **`qwen2.5` n'est pas un modèle à réflexion.** Ne pas y envoyer de paramètre `think` : Ollama renvoie une erreur explicite plutôt que de l'ignorer.
+- **`qwen2.5` n'est pas un modèle à réflexion.** Ne pas y envoyer de paramètre `think` : Ollama renvoie une erreur explicite plutôt que de l'ignorer. `qwen3:14b` et `gemma4` sont installés et annoncent la capacité `thinking` : c'est vers eux qu'il faut se tourner quand la réflexion est utile.
 - Pour les modèles compatibles (qwen3, gpt-oss, deepseek-r1…), le champ `think` se place **au premier niveau** de la requête, à côté de `model` et `messages` — pas dans l'objet `options`.
 - Valeurs acceptées par l'API : `true`, `false`, `low`, `medium`, `high`.
 - La réflexion est **activée par défaut** en CLI comme en API pour les modèles qui la supportent. Il faut expliciter `"think": false` pour la couper.
@@ -96,6 +116,10 @@ Les champs `load_duration`, `prompt_eval_duration` et `eval_duration` des répon
 ## Conventions
 
 - Toute modification d'infrastructure passe par le dépôt, jamais en direct sur la VM.
-- Épingler les versions d'images Docker (pas de `latest`).
+- Épingler les versions d'images Docker (pas de `latest`). En service : n8n **2.38.6** (ce que résolvait le tag `stable`), PostgreSQL **17.11-alpine**. Une montée de version est un commit explicite — voir `docs/deployment.md`.
+- Les migrations de base n8n sont jouées au démarrage et **ne sont pas réversibles** : le repli après une montée de version majeure est la restauration du dump pré-déploiement que prend `deploy.sh`.
+- Ne pas monter `./backups` dans le conteneur n8n : les droits d'écriture dépendraient du propriétaire du répertoire hôte, qui diffère entre Docker rootful et rootless. Les exports CLI passent par `docker compose cp`.
+- `n8n export:workflow --all` sort en **code non nul** quand il n'y a rien à exporter. Tout script qui l'enchaîne doit tolérer ce cas, sinon une instance vide casse la sauvegarde.
+- Un JSON de `templates/` doit porter un `id` de premier niveau, sinon `n8n import:workflow` échoue sur `null value in column "id"`.
 - Garder la même distribution sur les deux VM pour éviter de jongler entre écosystèmes.
 - Documenter dans `docs/` toute décision d'exploitation non évidente.
