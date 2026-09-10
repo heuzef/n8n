@@ -44,8 +44,10 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      # Loopback only — the external reverse proxy is the single entry point.
-      - "127.0.0.1:5678:5678"
+      # Caddy runs on another host, so loopback would make n8n unreachable.
+      # Bound to the LAN address rather than 0.0.0.0 so that n8n is never
+      # served directly, bypassing TLS, if the VM ever gets a public interface.
+      - "${N8N_BIND_ADDRESS:-192.168.0.107}:5678:5678"
     environment:
       # --- Database -----------------------------------------------------
       DB_TYPE: postgresdb
