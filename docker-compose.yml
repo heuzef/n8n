@@ -1,0 +1,124 @@
+name: n8n
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:17.11-alpine
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-n8n}
+      # Consumed by docker/postgres/init-non-root-user.sh
+      POSTGRES_NON_ROOT_USER: ${POSTGRES_NON_ROOT_USER:-n8n}
+      POSTGRES_NON_ROOT_PASSWORD: ${POSTGRES_NON_ROOT_PASSWORD:?POSTGRES_NON_ROOT_PASSWORD is required}
+      TZ: ${GENERIC_TIMEZONE:-Europe/Paris}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init-non-root-user.sh:/docker-entrypoint-initdb.d/init-non-root-user.sh:ro
+    # Deliberately not published on the host: only n8n reaches the database.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-n8n}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    mem_limit: 1g
+    cpus: 2
+
+  n8n:
+    build:
+      context: .
+      args:
+        N8N_VERSION: ${N8N_VERSION:-2.38.6}
+    image: n8n-local:${N8N_VERSION:-2.38.6}
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      # Loopback only — the external reverse proxy is the single entry point.
+      - "127.0.0.1:5678:5678"
+    environment:
+      # --- Database -----------------------------------------------------
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-n8n}
+      DB_POSTGRESDB_USER: ${POSTGRES_NON_ROOT_USER:-n8n}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_NON_ROOT_PASSWORD:?POSTGRES_NON_ROOT_PASSWORD is required}
+
+      # --- Identity / URLs ----------------------------------------------
+      # Losing this key makes every stored credential unrecoverable.
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?N8N_ENCRYPTION_KEY is required}
+      N8N_HOST: ${N8N_HOST:?N8N_HOST is required}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: https
+      N8N_EDITOR_BASE_URL: https://${N8N_HOST}/
+      WEBHOOK_URL: https://${N8N_HOST}/
+      # Number of proxies between the client and n8n. 1 = the reverse proxy.
+      N8N_PROXY_HOPS: 1
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Europe/Paris}
+      TZ: ${GENERIC_TIMEZONE:-Europe/Paris}
+
+      # --- Execution ------------------------------------------------------
+      EXECUTIONS_MODE: regular
+      N8N_RUNNERS_ENABLED: "true"
+      # Nightly batch jobs against a ~4 tok/s CPU model: a 500-token answer is
+      # about 2 minutes, so the default timeout is far too short.
+      EXECUTIONS_TIMEOUT: ${EXECUTIONS_TIMEOUT:-3600}
+      EXECUTIONS_TIMEOUT_MAX: ${EXECUTIONS_TIMEOUT_MAX:-7200}
+      EXECUTIONS_DATA_SAVE_ON_ERROR: all
+      EXECUTIONS_DATA_SAVE_ON_SUCCESS: all
+      EXECUTIONS_DATA_SAVE_ON_PROGRESS: "false"
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: ${EXECUTIONS_DATA_MAX_AGE:-336}
+
+      # --- Community nodes -------------------------------------------------
+      # Installation happens at build time (see Dockerfile). The UI installer
+      # stays available for evaluation, but anything kept must land in
+      # community-nodes.txt.
+      N8N_COMMUNITY_PACKAGES_ENABLED: "true"
+      N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE: "true"
+      N8N_REINSTALL_MISSING_PACKAGES: "true"
+
+      # --- Hardening / noise -----------------------------------------------
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      N8N_TEMPLATES_ENABLED: "false"
+      N8N_HIRING_BANNER_ENABLED: "false"
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "true"
+      N8N_LOG_LEVEL: ${N8N_LOG_LEVEL:-info}
+      N8N_LOG_OUTPUT: console
+
+      # --- Ollama ------------------------------------------------------------
+      # Consumed by workflows; no auth on that API, the private firewall is the
+      # only protection. See docs/ollama.md.
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://192.168.0.106:11434}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./workflows:/workflows:ro
+      # No bind mount for backups on purpose: whether the `node` user (uid 1000)
+      # could write to a host directory would depend on that directory's owner,
+      # which differs between rootful and rootless Docker. CLI exports are written
+      # inside the n8n volume and pulled out with `docker compose cp`.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5678/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    mem_limit: 3g
+    cpus: 4
+
+volumes:
+  postgres_data:
+  n8n_data:

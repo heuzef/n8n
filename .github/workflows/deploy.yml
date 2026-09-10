@@ -1,0 +1,36 @@
+name: Deploy
+# Every push to main redeploys the n8n VM over SSH.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Never run two deployments against the same VM at once.
+concurrency:
+  group: deploy-n8n-vm
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to n8n VM
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          # Optional secret: falls back to the standard SSH port.
+          port: ${{ secrets.SSH_PORT || 22 }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          command_timeout: 25m
+          # Abort as soon as one command fails, instead of reporting success.
+          script_stop: true
+          script: |
+            set -eu
+            cd /root/n8n
+            git fetch --prune origin
+            git reset --hard origin/main
+            ./deploy.sh
