@@ -13,10 +13,8 @@ $EDITOR .env
 docker compose up -d
 ```
 
-Fill in all seven keys. 
-Only three of them stop Compose when left empty an empty `N8N_BIND_ADDRESS` silently publishes n8n on every interface.
-
-The port is required. Caddy handles TLS and WebSockets on its own.
+Fill in all seven keys. Only three of them stop Compose when left empty — an
+empty `N8N_BIND_ADDRESS` silently publishes n8n on every interface.
 
 ## Deploy
 
