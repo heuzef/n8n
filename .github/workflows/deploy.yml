@@ -29,4 +29,6 @@ jobs:
           script: |
             set -eu
             cd /root/n8n
-            ./deploy.sh
+            git fetch --prune origin
+            git reset --hard origin/main
+            echo "Hello from Workflow !"
