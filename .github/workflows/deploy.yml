@@ -26,11 +26,7 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           command_timeout: 25m
-          # Abort as soon as one command fails, instead of reporting success.
-          script_stop: true
           script: |
             set -eu
             cd /root/n8n
-            git fetch --prune origin
-            git reset --hard origin/main
             ./deploy.sh
