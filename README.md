@@ -13,8 +13,7 @@ $EDITOR .env
 docker compose up -d
 ```
 
-Fill in all seven keys. Only three of them stop Compose when left empty — an
-empty `N8N_BIND_ADDRESS` silently publishes n8n on every interface.
+Fill in all seven keys. Only three of them stop Compose when left empty, and an empty `N8N_BIND_ADDRESS` silently publishes n8n on every interface.
 
 ## Deploy
 
