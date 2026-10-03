@@ -15,7 +15,17 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-
+  
+  adminer: # ssh -L 8081:127.0.0.1:8081 workflow
+    image: adminer
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    ports:
+      - "127.0.0.1:8081:8080"
+  
   n8n:
     # Pinned: n8nio/runners must run the exact same version (see the task-runners service).
     image: n8nio/n8n:2.38.6
